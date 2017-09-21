@@ -10,6 +10,23 @@ The code is released unter the Boost Source License v1.0 (see LICENSE file).
 
 *Smaller address space.* Using a smaller pointer means that you can only allocate a finite number of objects of the same type before you run out of address space. If you use pointer with a size of 1 byte, you can only create 255 instances of the same type. Of course you can have more pointers, but not more pointees.
 
-*Slower access.* Dereferencing a small pointer may be slower than deferencing a normal pointer. Benchmarks will follow.
+<!-- *Slower access.* Dereferencing a small pointer may be slower than deferencing a normal pointer. Benchmarks will follow.
+ -->
 
 *Conflicts with custom allocation.* As you may be able to guess, this library manages memory in a special way to make small pointers work. It *may* not work with classes that also customize memory allocation.
+
+## Benchmarks
+
+A small pointer with a stack-based memory pool is faster to create than a standard pointer. Access speed is the same.
+
+|Benchmark                                                            |CPU [ns]|
+|:--------------------------------------------------------------------|-------:|
+|`std_ptr_create_destroy<char>`                                       |      77|
+|`small_ptr_create_destroy<char, tag::stack_pool<3>>`                 |      51|
+|`small_ptr_create_destroy<char, tag::stack_pool<255>>`               |      51|
+|`std_ptr_create_destroy<std::array<char, 256>>`                      |     125|
+|`small_ptr_create_destroy<std::array<char, 256>, tag::stack_pool<3>>`|      50|
+|`std_ptr_access<char>`                                               |       2|
+|`small_ptr_access<char, tag::stack_pool<3>>`                         |       2|
+|`std_ptr_access<std::array<char, 256>>`                              |       2|
+|`small_ptr_access<std::array<char, 256>, tag::stack_pool<3>>`        |       2|
