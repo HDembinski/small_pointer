@@ -13,20 +13,24 @@ The code is released unter the Boost Source License v1.0 (see LICENSE file).
 <!-- *Slower access.* Dereferencing a small pointer may be slower than deferencing a normal pointer. Benchmarks will follow.
  -->
 
-*Conflicts with custom allocation.* As you may be able to guess, this library manages memory in a special way to make small pointers work. It *may* not work with classes that also customize memory allocation.
+*Conflicts with custom allocation.* As you may be able to guess, this library manages memory in a special way to make small pointers work. It does not work with classes that also customize memory allocation.
 
 ## Benchmarks
 
-A small pointer with a stack-based memory pool is faster to create than a standard pointer. Access speed is the same.
+Creating a finite pool of objects repeatedly via small pointers is faster than a standard pointer, because small pointers use a memory pool and can reuse previously freed memory. Access speed is the same.
 
 |Benchmark                                                            |CPU [ns]|
 |:--------------------------------------------------------------------|-------:|
-|`std_ptr_create_destroy<char>`                                       |      77|
+|`std_ptr_create_destroy<char>`                                       |      76|
 |`small_ptr_create_destroy<char, tag::stack_pool<3>>`                 |      51|
 |`small_ptr_create_destroy<char, tag::stack_pool<255>>`               |      51|
-|`std_ptr_create_destroy<std::array<char, 256>>`                      |     125|
+|`small_ptr_create_destroy<char, tag::dynamic_pool>`                  |      48|
+|`std_ptr_create_destroy<std::array<char, 256>>`                      |     137|
 |`small_ptr_create_destroy<std::array<char, 256>, tag::stack_pool<3>>`|      50|
+|`small_ptr_create_destroy<std::array<char, 256>, tag::dynamic_pool>` |      51|
 |`std_ptr_access<char>`                                               |       2|
 |`small_ptr_access<char, tag::stack_pool<3>>`                         |       2|
+|`small_ptr_access<char, tag::dynamic_pool>`                          |       2|
 |`std_ptr_access<std::array<char, 256>>`                              |       2|
 |`small_ptr_access<std::array<char, 256>, tag::stack_pool<3>>`        |       2|
+|`small_ptr_access<std::array<char, 256>, tag::dynamic_pool>`         |       2|
