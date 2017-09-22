@@ -18,29 +18,14 @@ template <typename A, typename B> constexpr unsigned max_size() {
   return sizeof(A) > sizeof(B) ? sizeof(A) : sizeof(B);
 }
 
-template <typename Tpos, std::size_t Nbytes> struct chunk_t {
-  chunk_t() = default;
-  chunk_t(const chunk_t &other) { pos() = other.pos(); }
-  chunk_t &operator=(const chunk_t &other) {
-    pos() = other.pos();
-    return *this;
-  }
-  chunk_t(chunk_t &&other) { pos() = other.pos(); }
-  chunk_t &operator=(chunk_t &&other) {
-    pos() = other.pos();
-    return *this;
-  }
-
-  Tpos &pos() { return *reinterpret_cast<Tpos *>(buffer); }
-  const Tpos &pos() const { return *reinterpret_cast<const Tpos *>(buffer); }
-  template <typename T> T *as() { return reinterpret_cast<T *>(buffer); }
-  char buffer[Nbytes];
-};
-
 template <typename Tpointee, typename Tpos, std::size_t Ncapacity>
 struct stack_pool_impl {
   static_assert(Ncapacity <= std::numeric_limits<Tpos>::max(),
                 "Ncapacity is too large");
+  using chunk = union {
+    Tpos pos;
+    char buffer[max_size<Tpointee, Tpos>()];
+  };
 
   Tpos allocate() noexcept {
     if (free_pos == Ncapacity) {
@@ -50,26 +35,46 @@ struct stack_pool_impl {
     if (pos == max_pos)
       free_pos = ++max_pos;
     else
-      free_pos = chunks[pos].pos();
+      free_pos = chunks[pos].pos;
     return pos + 1;
   }
 
   void deallocate(Tpos pos) noexcept {
-    chunks[--pos].pos() = free_pos;
+    chunks[--pos].pos = free_pos;
     free_pos = pos;
   }
 
   Tpointee *operator[](Tpos pos) noexcept {
-    return chunks[--pos].template as<Tpointee>();
+    return reinterpret_cast<Tpointee *>(chunks[--pos].buffer);
   }
 
   ::boost::mutex mtx;
   Tpos free_pos = 0, max_pos = 0;
-  chunk_t<Tpos, max_size<Tpointee, Tpos>()> chunks[Ncapacity];
+  chunk chunks[Ncapacity];
 };
+
+void *dynamic_pool_alloc(std::size_t size) { return std::malloc(size); }
+
+void dynamic_pool_free(void *p) { std::free(p); }
 
 template <typename Tpointee, typename Tpos> struct dynamic_pool_impl {
   static constexpr Tpos Ncapacity = std::numeric_limits<Tpos>::max();
+  struct chunk {
+    chunk() : ptr(dynamic_pool_alloc(sizeof(Tpointee))) {}
+    chunk(const chunk &) = delete;
+    chunk &operator=(const chunk &) = delete;
+    chunk(chunk &&other) : ptr(other.ptr) { other.ptr = 0; }
+    chunk &operator=(chunk &&other) {
+      if (this != &other) {
+        ptr = other.ptr;
+        other.ptr = 0;
+        return *this;
+      }
+    }
+    ~chunk() { dynamic_pool_free(ptr); }
+    Tpos pos;
+    void *ptr;
+  };
 
   Tpos allocate() {
     if (free_pos == Ncapacity) {
@@ -80,23 +85,23 @@ template <typename Tpointee, typename Tpos> struct dynamic_pool_impl {
       chunks.emplace_back();
       free_pos = chunks.size();
     } else
-      free_pos = chunks[pos].pos();
+      free_pos = chunks[pos].pos;
     return pos + 1;
   }
 
   void deallocate(Tpos pos) noexcept {
     --pos;
-    chunks[pos].pos() = free_pos;
+    chunks[pos].pos = free_pos;
     free_pos = pos;
   }
 
   Tpointee *operator[](Tpos pos) noexcept {
-    return chunks[--pos].template as<Tpointee>();
+    return static_cast<Tpointee *>(chunks[--pos].ptr);
   }
 
   ::boost::mutex mtx;
   Tpos free_pos = 0;
-  std::vector<chunk_t<Tpos, sizeof(Tpointee *)>> chunks;
+  std::vector<chunk> chunks;
 };
 
 } // namespace detail
