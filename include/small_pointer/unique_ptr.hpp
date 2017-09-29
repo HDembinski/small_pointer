@@ -19,11 +19,10 @@ template <typename A, typename B> constexpr unsigned max_size() {
   return sizeof(A) > sizeof(B) ? sizeof(A) : sizeof(B);
 }
 
-template <typename Tpointee, typename Tpos>
-struct pool_base_impl {
+template <typename Tpointee, typename Tpos> struct pool_base_impl {
   Tpos allocate() noexcept { return 0; }
   void deallocate(Tpos pos) noexcept {}
-  Tpointee* operator[](Tpos pos) noexcept { return nullptr; }
+  Tpointee *operator[](Tpos pos) noexcept { return nullptr; }
   ::boost::mutex mtx;
 };
 
@@ -62,11 +61,12 @@ struct stack_pool_impl : pool_base_impl<Tpointee, Tpos> {
 };
 
 struct std_alloc {
-  static void* alloc(std::size_t size) { return std::malloc(size); }
-  static void free(void* ptr) { std::free(ptr); };
+  static void *alloc(std::size_t size) { return std::malloc(size); }
+  static void free(void *ptr) { std::free(ptr); };
 };
 
-template <typename Tpointee, typename Tpos, typename StatelessAlloc> struct dynamic_pool_impl : pool_base_impl<Tpointee, Tpos> {
+template <typename Tpointee, typename Tpos, typename StatelessAlloc>
+struct dynamic_pool_impl : pool_base_impl<Tpointee, Tpos> {
   static constexpr Tpos Ncapacity = std::numeric_limits<Tpos>::max();
   struct chunk {
     chunk() : ptr(StatelessAlloc::alloc(sizeof(Tpointee))) {}
@@ -116,7 +116,8 @@ template <typename Tpointee, typename Tpos, typename StatelessAlloc> struct dyna
 
 namespace tag {
 template <unsigned Ncapacity> struct stack_pool;
-template <typename StatelessAlloc=::small_pointer::detail::std_alloc> struct dynamic_pool;
+template <typename StatelessAlloc = ::small_pointer::detail::std_alloc>
+struct dynamic_pool;
 } // namespace tag
 
 template <typename Tpointee, typename Tinteger, typename PoolTag>
@@ -129,7 +130,8 @@ class unique_ptr {
   template <typename T> struct tag2type {
     using type = detail::pool_base_impl<Tpointee, pos_type>;
   };
-  template <typename StatelessAlloc> struct tag2type<tag::dynamic_pool<StatelessAlloc>> {
+  template <typename StatelessAlloc>
+  struct tag2type<tag::dynamic_pool<StatelessAlloc>> {
     using type = detail::dynamic_pool_impl<Tpointee, pos_type, StatelessAlloc>;
   };
   template <unsigned Ncapacity> struct tag2type<tag::stack_pool<Ncapacity>> {
