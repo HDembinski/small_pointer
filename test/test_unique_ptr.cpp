@@ -19,46 +19,47 @@ struct test_type {
 };
 
 template <typename PoolTag> static void tests() {
-  auto p0 = make_unique<int, short, PoolTag>(42);
-  BOOST_TEST_EQ(sizeof(p0), sizeof(short));
+  auto p0 = make_unique<int, unsigned short, PoolTag>(42);
+  BOOST_TEST_EQ(sizeof(p0), sizeof(unsigned short));
   BOOST_TEST_EQ(*p0, 42);
 
-  auto p1 = make_unique<int, short, PoolTag>(43);
+  auto p1 = make_unique<int, unsigned short, PoolTag>(43);
   BOOST_TEST_EQ(*p0, 42);
   BOOST_TEST_EQ(*p1, 43);
 
-  auto p2 = make_unique<int, short, PoolTag>(44);
+  auto p2 = make_unique<int, unsigned short, PoolTag>(44);
   BOOST_TEST_EQ(*p0, 42);
   BOOST_TEST_EQ(*p1, 43);
   BOOST_TEST_EQ(*p2, 44);
 
   if (std::is_same<PoolTag, tag::stack_pool<3>>::value)
-    BOOST_TEST_THROWS((make_unique<int, short, PoolTag>(45)), std::bad_alloc);
+    BOOST_TEST_THROWS((make_unique<int, unsigned short, PoolTag>(45)),
+                      std::bad_alloc);
 
   test_type_ctor_count = 0;
   test_type_dtor_count = 0;
   {
-    auto p0 = make_unique<test_type, short, PoolTag>(42);
+    auto p0 = make_unique<test_type, unsigned short, PoolTag>(42);
     BOOST_TEST_EQ(*p0, 42);
 
-    auto p1 = make_unique<test_type, short, PoolTag>(43);
+    auto p1 = make_unique<test_type, unsigned short, PoolTag>(43);
     BOOST_TEST_EQ(*p0, 42);
     BOOST_TEST_EQ(*p1, 43);
 
-    auto p2 = make_unique<test_type, short, PoolTag>(44);
+    auto p2 = make_unique<test_type, unsigned short, PoolTag>(44);
     BOOST_TEST_EQ(*p0, 42);
     BOOST_TEST_EQ(*p1, 43);
     BOOST_TEST_EQ(*p2, 44);
 
     p0.reset();
-    p0 = make_unique<test_type, short, PoolTag>(45);
+    p0 = make_unique<test_type, unsigned short, PoolTag>(45);
     BOOST_TEST_EQ(*p0, 45);
     BOOST_TEST_EQ(*p1, 43);
     BOOST_TEST_EQ(*p2, 44);
 
     p0.reset();
 
-    p0.reset(make_unique<test_type, short, PoolTag>(46));
+    p0.reset(make_unique<test_type, unsigned short, PoolTag>(46));
     BOOST_TEST_EQ(*p0, 46);
     BOOST_TEST_EQ(*p1, 43);
     BOOST_TEST_EQ(*p2, 44);
@@ -73,6 +74,10 @@ int main() {
   tests<tag::stack_pool<3>>();
   tests<tag::stack_pool<255>>();
   tests<tag::dynamic_pool<>>();
+
+  tests<tag::thread_local_stack_pool<3>>();
+  tests<tag::thread_local_stack_pool<255>>();
+  tests<tag::thread_local_dynamic_pool<>>();
 
   return boost::report_errors();
 }

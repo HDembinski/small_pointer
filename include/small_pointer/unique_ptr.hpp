@@ -14,20 +14,28 @@
 namespace small_pointer {
 
 namespace detail {
-
 template <typename A, typename B> constexpr unsigned max_size() {
   return sizeof(A) > sizeof(B) ? sizeof(A) : sizeof(B);
 }
-
-template <typename Tpointee, typename Tpos> struct pool_base_impl {
-  Tpos allocate() noexcept { return 0; }
-  void deallocate(Tpos pos) noexcept {}
-  Tpointee *operator[](Tpos pos) noexcept { return nullptr; }
-  ::boost::mutex mtx;
+struct std_alloc {
+  static void *alloc(std::size_t size) { return std::malloc(size); }
+  static void free(void *ptr) { std::free(ptr); };
 };
+} // namespace detail
+
+namespace tag {
+template <unsigned Ncapacity> struct stack_pool;
+template <unsigned Ncapacity> struct thread_local_stack_pool;
+template <typename Alloc = ::small_pointer::detail::std_alloc>
+struct dynamic_pool;
+template <typename Alloc = ::small_pointer::detail::std_alloc>
+struct thread_local_dynamic_pool;
+} // namespace tag
+
+namespace detail {
 
 template <typename Tpointee, typename Tpos, std::size_t Ncapacity>
-struct stack_pool_impl : pool_base_impl<Tpointee, Tpos> {
+struct stack_pool_impl {
   static_assert(Ncapacity <= std::numeric_limits<Tpos>::max(),
                 "Ncapacity is too large");
   using chunk = union {
@@ -60,16 +68,11 @@ struct stack_pool_impl : pool_base_impl<Tpointee, Tpos> {
   chunk chunks[Ncapacity];
 };
 
-struct std_alloc {
-  static void *alloc(std::size_t size) { return std::malloc(size); }
-  static void free(void *ptr) { std::free(ptr); };
-};
-
-template <typename Tpointee, typename Tpos, typename StatelessAlloc>
-struct dynamic_pool_impl : pool_base_impl<Tpointee, Tpos> {
+template <typename Tpointee, typename Tpos, typename Alloc>
+struct dynamic_pool_impl {
   static constexpr Tpos Ncapacity = std::numeric_limits<Tpos>::max();
   struct chunk {
-    chunk() : ptr(StatelessAlloc::alloc(sizeof(Tpointee))) {}
+    chunk() : ptr(Alloc::alloc(sizeof(Tpointee))) {}
     chunk(const chunk &) = delete;
     chunk &operator=(const chunk &) = delete;
     chunk(chunk &&other) : ptr(other.ptr) { other.ptr = 0; }
@@ -80,7 +83,7 @@ struct dynamic_pool_impl : pool_base_impl<Tpointee, Tpos> {
         return *this;
       }
     }
-    ~chunk() { StatelessAlloc::free(ptr); }
+    ~chunk() { Alloc::free(ptr); }
     Tpos pos;
     void *ptr;
   };
@@ -112,34 +115,114 @@ struct dynamic_pool_impl : pool_base_impl<Tpointee, Tpos> {
   std::vector<chunk> chunks;
 };
 
+template <typename Tpointee, typename Tpos, typename P> struct storage_t;
+
+// global implementations
+
+template <typename Tpointee, typename Tpos, unsigned Ncapacity>
+struct storage_t<Tpointee, Tpos,
+                 ::small_pointer::tag::stack_pool<Ncapacity>> {
+  static stack_pool_impl<Tpointee, Tpos, Ncapacity> storage;
+  static ::boost::mutex mtx;
+  template <typename... Args> static Tpos create(Args &&... args) {
+    ::boost::lock_guard<::boost::mutex> lock(mtx);
+    const auto pos = storage.allocate();
+    if (!pos)
+      throw std::bad_alloc();
+    new (storage[pos]) Tpointee(std::forward<Args>(args)...);
+    return pos;
+  }
+  static void destroy(Tpos pos) {
+    ::boost::lock_guard<::boost::mutex> lock(mtx);
+    storage[pos]->~Tpointee();
+    storage.deallocate(pos);
+  }
+};
+
+template <typename T, typename U, unsigned N>
+stack_pool_impl<T, U, N>
+    storage_t<T, U, ::small_pointer::tag::stack_pool<N>>::storage;
+template <typename T, typename U, unsigned N>
+::boost::mutex storage_t<T, U, ::small_pointer::tag::stack_pool<N>>::mtx;
+
+template <typename Tpointee, typename Tpos, typename Alloc>
+struct storage_t<Tpointee, Tpos,
+                 ::small_pointer::tag::dynamic_pool<Alloc>> {
+  static dynamic_pool_impl<Tpointee, Tpos, Alloc> storage;
+  static ::boost::mutex mtx;
+  template <typename... Args> static Tpos create(Args &&... args) {
+    ::boost::lock_guard<::boost::mutex> lock(mtx);
+    const auto pos = storage.allocate();
+    if (!pos)
+      throw std::bad_alloc();
+    new (storage[pos]) Tpointee(std::forward<Args>(args)...);
+    return pos;
+  }
+  static void destroy(Tpos pos) {
+    ::boost::lock_guard<::boost::mutex> lock(mtx);
+    storage[pos]->~Tpointee();
+    storage.deallocate(pos);
+  }
+};
+
+template <typename T, typename U, typename A>
+dynamic_pool_impl<T, U, A>
+    storage_t<T, U, ::small_pointer::tag::dynamic_pool<A>>::storage;
+template <typename T, typename U, typename A>
+::boost::mutex
+    storage_t<T, U, ::small_pointer::tag::dynamic_pool<A>>::mtx;
+
+// thread local implementations
+
+template <typename Tpointee, typename Tpos, unsigned Ncapacity>
+struct storage_t<Tpointee, Tpos,
+                 ::small_pointer::tag::thread_local_stack_pool<Ncapacity>> {
+  static thread_local stack_pool_impl<Tpointee, Tpos, Ncapacity> storage;
+  template <typename... Args> static Tpos create(Args &&... args) {
+    const auto pos = storage.allocate();
+    if (!pos)
+      throw std::bad_alloc();
+    new (storage[pos]) Tpointee(std::forward<Args>(args)...);
+    return pos;
+  }
+  static void destroy(Tpos pos) {
+    storage[pos]->~Tpointee();
+    storage.deallocate(pos);
+  }
+};
+
+template <typename T, typename U, unsigned N>
+thread_local stack_pool_impl<T, U, N>
+    storage_t<T, U, ::small_pointer::tag::thread_local_stack_pool<N>>::storage;
+
+template <typename Tpointee, typename Tpos, typename Alloc>
+struct storage_t<Tpointee, Tpos,
+                 ::small_pointer::tag::thread_local_dynamic_pool<Alloc>> {
+  static thread_local dynamic_pool_impl<Tpointee, Tpos, Alloc> storage;
+  template <typename... Args> static Tpos create(Args &&... args) {
+    const auto pos = storage.allocate();
+    if (!pos)
+      throw std::bad_alloc();
+    new (storage[pos]) Tpointee(std::forward<Args>(args)...);
+    return pos;
+  }
+  static void destroy(Tpos pos) {
+    storage[pos]->~Tpointee();
+    storage.deallocate(pos);
+  }
+};
+
+template <typename T, typename U, typename A>
+thread_local dynamic_pool_impl<T, U, A> storage_t<
+    T, U, ::small_pointer::tag::thread_local_dynamic_pool<A>>::storage;
+
 } // namespace detail
 
-namespace tag {
-template <unsigned Ncapacity> struct stack_pool;
-template <typename StatelessAlloc = ::small_pointer::detail::std_alloc>
-struct dynamic_pool;
-} // namespace tag
+template <typename Tpointee, typename Tpos, typename PoolTag>
+class unique_ptr : private detail::storage_t<Tpointee, Tpos, PoolTag> {
 
-template <typename Tpointee, typename Tinteger, typename PoolTag>
-class unique_ptr {
-  using pos_type = typename ::boost::make_unsigned<Tinteger>::type;
-
-  static_assert(sizeof(pos_type) <= sizeof(Tpointee *),
+  static_assert(sizeof(Tpos) <= sizeof(Tpointee *),
                 "Using an integer larger than a normal pointer makes no sense");
-
-  template <typename T> struct tag2type {
-    using type = detail::pool_base_impl<Tpointee, pos_type>;
-  };
-  template <typename StatelessAlloc>
-  struct tag2type<tag::dynamic_pool<StatelessAlloc>> {
-    using type = detail::dynamic_pool_impl<Tpointee, pos_type, StatelessAlloc>;
-  };
-  template <unsigned Ncapacity> struct tag2type<tag::stack_pool<Ncapacity>> {
-    using type = detail::stack_pool_impl<Tpointee, pos_type, Ncapacity>;
-  };
-
-  using storage_type = typename tag2type<PoolTag>::type;
-  static storage_type storage;
 
 public:
   using element_type = Tpointee;
@@ -161,12 +244,12 @@ public:
   ~unique_ptr() {
     if (!pos)
       return;
-    ::boost::lock_guard<::boost::mutex> lock(storage.mtx);
-    storage[pos]->~element_type();
-    storage.deallocate(pos);
+    detail::storage_t<Tpointee, Tpos, PoolTag>::destroy(pos);
   }
 
-  pointer get() const noexcept { return storage[pos]; }
+  pointer get() const noexcept {
+    return detail::storage_t<Tpointee, Tpos, PoolTag>::storage[pos];
+  }
 
   auto operator*() const -> reference {
     BOOST_ASSERT(pos);
@@ -180,26 +263,18 @@ public:
   void swap(unique_ptr &other) noexcept { std::swap(pos, other.pos); }
 
 private:
-  explicit unique_ptr(pos_type p) noexcept : pos(p) {}
+  explicit unique_ptr(Tpos p) noexcept : pos(p) {}
 
-  pos_type pos = 0;
+  Tpos pos = 0;
 
   template <typename T, typename U, typename P, class... A>
   friend unique_ptr<T, U, P> make_unique(A &&...);
 };
 
-// static member must be defined outside of class
-template <typename T, typename U, typename P>
-typename unique_ptr<T, U, P>::storage_type unique_ptr<T, U, P>::storage;
-
-template <typename Tpointee, typename Tinteger, typename PoolTag, class... Args>
-unique_ptr<Tpointee, Tinteger, PoolTag> make_unique(Args &&... args) {
-  using unique_ptr_t = unique_ptr<Tpointee, Tinteger, PoolTag>;
-  ::boost::lock_guard<::boost::mutex> lock(unique_ptr_t::storage.mtx);
-  const auto pos = unique_ptr_t::storage.allocate();
-  if (!pos)
-    throw std::bad_alloc();
-  new (unique_ptr_t::storage[pos]) Tpointee(std::forward<Args>(args)...);
+template <typename Tpointee, typename Tpos, typename PoolTag, class... Args>
+unique_ptr<Tpointee, Tpos, PoolTag> make_unique(Args &&... args) {
+  using unique_ptr_t = unique_ptr<Tpointee, Tpos, PoolTag>;
+  const auto pos = unique_ptr_t::create(std::forward<Args>(args)...);
   return unique_ptr_t(pos);
 }
 
