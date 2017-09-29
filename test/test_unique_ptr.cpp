@@ -72,7 +72,7 @@ int main() {
 
   tests<tag::stack_pool<3>>();
   tests<tag::stack_pool<255>>();
-  tests<tag::dynamic_pool>();
+  tests<tag::dynamic_pool<>>();
 
   return boost::report_errors();
 }

@@ -14,12 +14,21 @@
 namespace small_pointer {
 
 namespace detail {
+
 template <typename A, typename B> constexpr unsigned max_size() {
   return sizeof(A) > sizeof(B) ? sizeof(A) : sizeof(B);
 }
 
+template <typename Tpointee, typename Tpos>
+struct pool_base_impl {
+  Tpos allocate() noexcept { return 0; }
+  void deallocate(Tpos pos) noexcept {}
+  Tpointee* operator[](Tpos pos) noexcept { return nullptr; }
+  ::boost::mutex mtx;
+};
+
 template <typename Tpointee, typename Tpos, std::size_t Ncapacity>
-struct stack_pool_impl {
+struct stack_pool_impl : pool_base_impl<Tpointee, Tpos> {
   static_assert(Ncapacity <= std::numeric_limits<Tpos>::max(),
                 "Ncapacity is too large");
   using chunk = union {
@@ -48,19 +57,19 @@ struct stack_pool_impl {
     return reinterpret_cast<Tpointee *>(chunks[--pos].buffer);
   }
 
-  ::boost::mutex mtx;
   Tpos free_pos = 0, max_pos = 0;
   chunk chunks[Ncapacity];
 };
 
-void *dynamic_pool_alloc(std::size_t size) { return std::malloc(size); }
+struct std_alloc {
+  static void* alloc(std::size_t size) { return std::malloc(size); }
+  static void free(void* ptr) { std::free(ptr); };
+};
 
-void dynamic_pool_free(void *p) { std::free(p); }
-
-template <typename Tpointee, typename Tpos> struct dynamic_pool_impl {
+template <typename Tpointee, typename Tpos, typename StatelessAlloc> struct dynamic_pool_impl : pool_base_impl<Tpointee, Tpos> {
   static constexpr Tpos Ncapacity = std::numeric_limits<Tpos>::max();
   struct chunk {
-    chunk() : ptr(dynamic_pool_alloc(sizeof(Tpointee))) {}
+    chunk() : ptr(StatelessAlloc::alloc(sizeof(Tpointee))) {}
     chunk(const chunk &) = delete;
     chunk &operator=(const chunk &) = delete;
     chunk(chunk &&other) : ptr(other.ptr) { other.ptr = 0; }
@@ -71,7 +80,7 @@ template <typename Tpointee, typename Tpos> struct dynamic_pool_impl {
         return *this;
       }
     }
-    ~chunk() { dynamic_pool_free(ptr); }
+    ~chunk() { StatelessAlloc::free(ptr); }
     Tpos pos;
     void *ptr;
   };
@@ -99,7 +108,6 @@ template <typename Tpointee, typename Tpos> struct dynamic_pool_impl {
     return static_cast<Tpointee *>(chunks[--pos].ptr);
   }
 
-  ::boost::mutex mtx;
   Tpos free_pos = 0;
   std::vector<chunk> chunks;
 };
@@ -108,7 +116,7 @@ template <typename Tpointee, typename Tpos> struct dynamic_pool_impl {
 
 namespace tag {
 template <unsigned Ncapacity> struct stack_pool;
-struct dynamic_pool {};
+template <typename StatelessAlloc=::small_pointer::detail::std_alloc> struct dynamic_pool;
 } // namespace tag
 
 template <typename Tpointee, typename Tinteger, typename PoolTag>
@@ -119,7 +127,10 @@ class unique_ptr {
                 "Using an integer larger than a normal pointer makes no sense");
 
   template <typename T> struct tag2type {
-    using type = detail::dynamic_pool_impl<Tpointee, pos_type>;
+    using type = detail::pool_base_impl<Tpointee, pos_type>;
+  };
+  template <typename StatelessAlloc> struct tag2type<tag::dynamic_pool<StatelessAlloc>> {
+    using type = detail::dynamic_pool_impl<Tpointee, pos_type, StatelessAlloc>;
   };
   template <unsigned Ncapacity> struct tag2type<tag::stack_pool<Ncapacity>> {
     using type = detail::stack_pool_impl<Tpointee, pos_type, Ncapacity>;
